@@ -19,12 +19,19 @@ using Tweetinvi;
 using Tweetinvi.Core.Extensions;
 using Tweetinvi.Models;
 using Location = Pokewatch.Datatypes.Location;
+using System.Net;
+using System.Text;
+using Newtonsoft.Json;
 
 namespace Pokewatch
 {
 	public class Program
 	{
-		public static void Main(string[] args)
+        private static Configuration s_config;
+        private static IAuthenticatedUser s_twitterClient;
+        private static Session s_pogoSession;
+
+        public static void Main(string[] args)
 		{
 			try
 			{
@@ -44,9 +51,6 @@ namespace Pokewatch
 				return;
 			}
 
-			if (!PrepareTwitterClient())
-				return;
-
 			Log("[+]Sucessfully signed in to twitter.");
 			if (PrepareClient())
 			{
@@ -59,24 +63,27 @@ namespace Pokewatch
 
 		private static bool Search()
 		{
-			Queue<FoundPokemon> tweetedPokemon = new Queue<FoundPokemon>();
-			DateTime lastTweet = DateTime.MinValue;
-			Random random = new Random();
+			Queue<FoundPokemon> groupMePokemon = new Queue<FoundPokemon>();
+            List<Location> townLocationsList = new List<Location>(); 
+            //DateTime lastTweet = DateTime.MinValue;
+            DateTime lastGroupMeMessage = DateTime.MinValue;
+            Random random = new Random();
 			while (true)
 			{
-				int regionIndex = random.Next(s_config.Regions.Count);
-				if (regionIndex == s_config.Regions.Count)
-					regionIndex = 0;
+                int regionIndex = random.Next(s_config.Regions.Count);
+                if (regionIndex == s_config.Regions.Count)
+                    regionIndex = 0;
 
-				Region region = s_config.Regions[regionIndex];
-				Log($"[!]Searching Region: {region.Name}");
-				foreach (Location location in region.Locations)
+                Region region = s_config.Regions[regionIndex];
+                Log($"[!]Searching Region: {region.Name}\n");
+
+                foreach (Location location in region.Locations)
 				{
 					SetLocation(location);
 
 					//Wait so we don't clobber api and to let the heartbeat catch up to our new location. (Minimum heartbeat time is 4000ms)
 					Thread.Sleep(5000);
-					Log("[!]Searching nearby cells.");
+					Log("[!]Searching nearby cells.\n");
 					RepeatedField<MapCell> mapCells;
 					try
 					{
@@ -91,38 +98,41 @@ namespace Pokewatch
 					{
 						foreach (WildPokemon pokemon in mapCell.WildPokemons)
 						{
-							FoundPokemon foundPokemon = ProcessPokemon(pokemon, tweetedPokemon, lastTweet);
+							FoundPokemon foundPokemon = ProcessPokemon(pokemon, groupMePokemon, lastGroupMeMessage);
 
 							if (foundPokemon == null)
 								continue;
 
-							string tweet = ComposeTweet(foundPokemon, region);
+                            //string tweet = ComposeTweet(foundPokemon, region);
+                            string groupMeMessage = ComposeGroupMeMessage(foundPokemon, region);
 
-							try
+                            try
 							{
-								s_twitterClient.PublishTweet(tweet);
+                                //s_twitterClient.PublishTweet(tweet);
+                                PublishToGroupMeBot(groupMeMessage);
 							}
 							catch(Exception ex)
 							{
-								Log("[-]Tweet failed to publish: " + tweet + " " + ex.Message);
+								Log("[-]groupMeMessage failed to publish: " + groupMeMessage + " " + ex.Message);
 								continue;
 							}
 
-							Log("[+]Tweet published: " + tweet);
-							lastTweet = DateTime.Now;
+							Log("[+]groupMeMessage published: " + groupMeMessage);
+                            lastGroupMeMessage = DateTime.Now;
+                            //lastTweet = DateTime.Now;
 
-							tweetedPokemon.Enqueue(foundPokemon);
-							if (tweetedPokemon.Count > 10)
-								tweetedPokemon.Dequeue();
+							groupMePokemon.Enqueue(foundPokemon);
+							if (groupMePokemon.Count > 10)
+								groupMePokemon.Dequeue();
 						}
 					}
 				}
-				Log("[!]Finished Searching " + region.Name);
+				Log("[!]Finished Searching " + region.Name + "\n");
 			}
 		}
-
-		//Sign in to PokemonGO
-		private static bool PrepareClient()
+        
+        //Sign in to PokemonGO
+        private static bool PrepareClient()
 		{
 			Location defaultLocation;
 			try
@@ -163,31 +173,6 @@ namespace Pokewatch
 				}
 			}
 			return false;
-		}
-
-		//Sign in to Twitter.
-		private static bool PrepareTwitterClient()
-		{
-			if (s_config.TwitterConsumerToken.IsNullOrEmpty() || s_config.TwitterConsumerSecret.IsNullOrEmpty()
-				|| s_config.TwitterAccessToken.IsNullOrEmpty() || s_config.TwitterConsumerSecret.IsNullOrEmpty())
-			{
-				Log("[-]Must supply Twitter OAuth strings.");
-				return false;
-			}
-
-			Log("[!]Signing in to Twitter.");
-			var userCredentials = Auth.CreateCredentials(s_config.TwitterConsumerToken, s_config.TwitterConsumerSecret, s_config.TwitterAccessToken, s_config.TwitterAccessSecret);
-			ExceptionHandler.SwallowWebExceptions = false;
-			try
-			{
-				s_twitterClient = User.GetAuthenticatedUser(userCredentials);
-			}
-			catch
-			{
-				Log("[-]Unable to authenticate Twitter account. Check your internet connection, verify your OAuth credential strings. If your bot is new, Twitter may still be validating your application.");
-				return false;
-			}
-			return true;
 		}
 
 		private static void SetLocation(Location location)
@@ -272,8 +257,62 @@ namespace Pokewatch
 			return tweet;
 		}
 
-		//Generate user friendly and hashtag friendly pokemon names
-		private static string SpellCheckPokemon(PokemonId pokemon, bool isHashtag = false)
+        //Create a message for the groupme
+        private static string ComposeGroupMeMessage(FoundPokemon pokemon, Region region)
+        {
+            Log("[!]Composing Tweet");
+            string latitude = pokemon.Location.Latitude.ToString(System.Globalization.CultureInfo.GetCultureInfo("en-us"));
+            string longitude = pokemon.Location.Longitude.ToString(System.Globalization.CultureInfo.GetCultureInfo("en-us"));
+            string mapsLink = $"https://www.google.com/maps/place/{latitude},{longitude}";
+            string expiration = DateTime.Now.AddSeconds(pokemon.LifeExpectancy).ToLocalTime().ToShortTimeString();
+            string message = "";
+
+            if (s_config.PriorityPokemon.Contains(pokemon.Kind))
+            {
+                message = string.Format(s_config.PriorityTweet, SpellCheckPokemon(pokemon.Kind), region.Prefix, region.Name, region.Suffix, expiration, mapsLink);
+            }
+            else
+            {
+                message = string.Format(s_config.RegularTweet, SpellCheckPokemon(pokemon.Kind), region.Prefix, region.Name, region.Suffix, expiration, mapsLink);
+            }
+
+            message = Regex.Replace(message, @"\s\s", @" ");
+            message = Regex.Replace(message, @"\s[!]", @"!");
+
+            //if (s_config.TagPokemon && (Tweet.Length(message + " #" + SpellCheckPokemon(pokemon.Kind, true)) < 138))
+            //    message += " #" + SpellCheckPokemon(pokemon.Kind, true);
+
+            //if (s_config.TagRegion && (Tweet.Length(message + " #" + Regex.Replace(region.Name, @"\s+", "")) < 138))
+            //    message += " #" + Regex.Replace(region.Name, @"\s+", "");
+
+            //foreach (string tag in s_config.CustomTags)
+            //{
+            //    if (Tweet.Length(message + tag) < 138)
+            //        message += " #" + tag;
+            //}
+
+            Log("[!]Sucessfully composed message.");
+            return message;
+        }
+
+        private static void PublishToGroupMeBot(string message)
+        {
+            HttpWebRequest httpRequest = (HttpWebRequest)WebRequest.Create("https://api.groupme.com/v3/bots/post");
+            httpRequest.Method = "POST";
+            httpRequest.ContentType = "application/json";
+
+            GroupMeBotPost jsonPost = new GroupMeBotPost("1a8604e8049c839ad76a861c4e", message);
+            string requestString = JsonConvert.SerializeObject(jsonPost);
+            byte[] bytes = new ASCIIEncoding().GetBytes(requestString);
+
+            httpRequest.ContentLength = bytes.Length;
+            System.IO.Stream httpStream = httpRequest.GetRequestStream();
+            httpStream.Write(bytes, 0, bytes.Length);
+            httpStream.Close();
+        }
+
+        //Generate user friendly and hashtag friendly pokemon names
+        private static string SpellCheckPokemon(PokemonId pokemon, bool isHashtag = false)
 		{
 			string display;
 			switch (pokemon)
@@ -302,7 +341,19 @@ namespace Pokewatch
 			return isHashtag ? regex.Replace(display, "") : display;
 		}
 
-		private static void Log(string message)
+        internal class GroupMeBotPost
+        {
+            public string bot_id;
+            public string text;
+
+            public GroupMeBotPost(string bot_id, string text)
+            {
+                this.bot_id = bot_id;
+                this.text = text;
+            }
+        }
+
+        private static void Log(string message)
 		{
 			Console.WriteLine(message);
 			using (StreamWriter w = File.AppendText("log.txt"))
@@ -310,9 +361,5 @@ namespace Pokewatch
 				w.WriteLine(DateTime.Now + ": " + message);
 			}
 		}
-
-		private static Configuration s_config;
-		private static IAuthenticatedUser s_twitterClient;
-		private static Session s_pogoSession;
 	}
 }
