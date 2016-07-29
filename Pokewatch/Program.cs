@@ -29,13 +29,14 @@ namespace Pokewatch
 	{
         private static Configuration s_config;
         private static IAuthenticatedUser s_twitterClient;
+        private static GroupMeBot groupMeBot;
         private static Session s_pogoSession;
 
         public static void Main(string[] args)
 		{
 			try
 			{
-				string json = File.ReadAllText("Configuration.json");
+				string json = File.ReadAllText("Configuration_JET.json");
 				s_config = new JavaScriptSerializer().Deserialize<Configuration>(json);
 			}
 			catch(Exception ex)
@@ -51,7 +52,11 @@ namespace Pokewatch
 				return;
 			}
 
-			Log("[+]Sucessfully signed in to twitter.");
+            //Setup GroupMeBot
+            groupMeBot = new GroupMeBot("1a8604e8049c839ad76a861c4e"); //Jasper town
+            //GroupMeBot groupMeBot = new GroupMeBot("9bcb8b42c2fa8e22b073cb0dc7"); //JET
+
+            Log("[+]Sucessfully signed in to twitter.");
 			if (PrepareClient())
 			{
 				Log("[+]Sucessfully signed in to PokemonGo, beginning search.");
@@ -109,7 +114,7 @@ namespace Pokewatch
                             try
 							{
                                 //s_twitterClient.PublishTweet(tweet);
-                                PublishToGroupMeBot(groupMeMessage);
+                                groupMeBot.PostMessage(groupMeMessage);
 							}
 							catch(Exception ex)
 							{
@@ -295,22 +300,6 @@ namespace Pokewatch
             return message;
         }
 
-        private static void PublishToGroupMeBot(string message)
-        {
-            HttpWebRequest httpRequest = (HttpWebRequest)WebRequest.Create("https://api.groupme.com/v3/bots/post");
-            httpRequest.Method = "POST";
-            httpRequest.ContentType = "application/json";
-
-            GroupMeBotPost jsonPost = new GroupMeBotPost("1a8604e8049c839ad76a861c4e", message);
-            string requestString = JsonConvert.SerializeObject(jsonPost);
-            byte[] bytes = new ASCIIEncoding().GetBytes(requestString);
-
-            httpRequest.ContentLength = bytes.Length;
-            System.IO.Stream httpStream = httpRequest.GetRequestStream();
-            httpStream.Write(bytes, 0, bytes.Length);
-            httpStream.Close();
-        }
-
         //Generate user friendly and hashtag friendly pokemon names
         private static string SpellCheckPokemon(PokemonId pokemon, bool isHashtag = false)
 		{
@@ -341,15 +330,29 @@ namespace Pokewatch
 			return isHashtag ? regex.Replace(display, "") : display;
 		}
 
-        internal class GroupMeBotPost
+        internal class GroupMeBot
         {
             public string bot_id;
-            public string text;
 
-            public GroupMeBotPost(string bot_id, string text)
+            public GroupMeBot(string bot_id)
             {
                 this.bot_id = bot_id;
-                this.text = text;
+            }
+            
+            public void PostMessage(string message)
+            {
+                HttpWebRequest httpRequest = (HttpWebRequest)WebRequest.Create("https://api.groupme.com/v3/bots/post");
+                httpRequest.Method = "POST";
+                httpRequest.ContentType = "application/json";
+
+                
+                string requestString = JsonConvert.SerializeObject(message);
+                byte[] bytes = new ASCIIEncoding().GetBytes(requestString);
+
+                httpRequest.ContentLength = bytes.Length;
+                System.IO.Stream httpStream = httpRequest.GetRequestStream();
+                httpStream.Write(bytes, 0, bytes.Length);
+                httpStream.Close();
             }
         }
 
