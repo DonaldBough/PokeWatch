@@ -28,15 +28,18 @@ namespace Pokewatch
 	public class Program
 	{
         private static Configuration s_config;
-        private static IAuthenticatedUser s_twitterClient;
         private static GroupMeBot groupMeBot;
         private static Session s_pogoSession;
 
         public static void Main(string[] args)
 		{
-			try
+            const string JASPER_GROUPMEBOT_KEY = "1a8604e8049c839ad76a861c4e";
+            const string JET_GROUPMEBOT_KEY = "9bcb8b42c2fa8e22b073cb0dc7";
+
+            try
 			{
-				string json = File.ReadAllText("Configuration_JET.json");
+
+                string json = File.ReadAllText("Configuration_JET.json");
 				s_config = new JavaScriptSerializer().Deserialize<Configuration>(json);
 			}
 			catch(Exception ex)
@@ -53,11 +56,18 @@ namespace Pokewatch
 			}
 
             //Setup GroupMeBot
-            groupMeBot = new GroupMeBot("1a8604e8049c839ad76a861c4e"); //Jasper town
-            //GroupMeBot groupMeBot = new GroupMeBot("9bcb8b42c2fa8e22b073cb0dc7"); //JET
+            try
+            {
+                groupMeBot = new GroupMeBot(JET_GROUPMEBOT_KEY); //Jasper town
+                groupMeBot.ListenForMessages();
+            }
+            catch (Exception e)
+            {
+                Log("[-] Problem registrering GroupMe Bot");
+            }
 
-            Log("[+]Sucessfully signed in to twitter.");
-			if (PrepareClient())
+            Log("[+]Sucessfully connected GroupMe Bot.");
+			if (PreparePOGOClient())
 			{
 				Log("[+]Sucessfully signed in to PokemonGo, beginning search.");
 			};
@@ -69,8 +79,7 @@ namespace Pokewatch
 		private static bool Search()
 		{
 			Queue<FoundPokemon> groupMePokemon = new Queue<FoundPokemon>();
-            List<Location> townLocationsList = new List<Location>(); 
-            //DateTime lastTweet = DateTime.MinValue;
+            List<Location> townLocationsList = new List<Location>();
             DateTime lastGroupMeMessage = DateTime.MinValue;
             Random random = new Random();
 			while (true)
@@ -107,13 +116,11 @@ namespace Pokewatch
 
 							if (foundPokemon == null)
 								continue;
-
-                            //string tweet = ComposeTweet(foundPokemon, region);
+                            
                             string groupMeMessage = ComposeGroupMeMessage(foundPokemon, region);
 
                             try
 							{
-                                //s_twitterClient.PublishTweet(tweet);
                                 groupMeBot.PostMessage(groupMeMessage);
 							}
 							catch(Exception ex)
@@ -124,7 +131,6 @@ namespace Pokewatch
 
 							Log("[+]groupMeMessage published: " + groupMeMessage);
                             lastGroupMeMessage = DateTime.Now;
-                            //lastTweet = DateTime.Now;
 
 							groupMePokemon.Enqueue(foundPokemon);
 							if (groupMePokemon.Count > 10)
@@ -137,7 +143,7 @@ namespace Pokewatch
 		}
         
         //Sign in to PokemonGO
-        private static bool PrepareClient()
+        private static bool PreparePOGOClient()
 		{
 			Location defaultLocation;
 			try
@@ -220,52 +226,14 @@ namespace Pokewatch
 				return null;
 			}
 
-			Log($"[!]Tweeting: {foundPokemon.Kind} ({foundPokemon.LifeExpectancy} seconds): {Math.Round(foundPokemon.Location.Latitude, 6)},{Math.Round(foundPokemon.Location.Longitude, 6)}");
+			Log($"[!]Sending: {foundPokemon.Kind} ({foundPokemon.LifeExpectancy} seconds): {Math.Round(foundPokemon.Location.Latitude, 6)},{Math.Round(foundPokemon.Location.Longitude, 6)}");
 			return foundPokemon;
 		}
 
-		//Build a tweet with useful information about the pokemon, then cram in as many hashtags as will fit.
-		private static string ComposeTweet(FoundPokemon pokemon, Region region)
-		{
-			Log("[!]Composing Tweet");
-			string latitude = pokemon.Location.Latitude.ToString(System.Globalization.CultureInfo.GetCultureInfo("en-us"));
-			string longitude = pokemon.Location.Longitude.ToString(System.Globalization.CultureInfo.GetCultureInfo("en-us"));
-			string mapsLink = $"https://www.google.com/maps/place/{latitude},{longitude}";
-			string expiration = DateTime.Now.AddSeconds(pokemon.LifeExpectancy).ToLocalTime().ToShortTimeString();
-			string tweet = "";
-
-			if (s_config.PriorityPokemon.Contains(pokemon.Kind))
-			{
-				tweet = string.Format(s_config.PriorityTweet, SpellCheckPokemon(pokemon.Kind), region.Prefix, region.Name, region.Suffix, expiration, mapsLink);
-			}
-			else
-			{
-				tweet = string.Format(s_config.RegularTweet, SpellCheckPokemon(pokemon.Kind), region.Prefix, region.Name, region.Suffix, expiration, mapsLink);
-			}
-
-			tweet = Regex.Replace(tweet, @"\s\s", @" ");
-			tweet = Regex.Replace(tweet, @"\s[!]", @"!");
-
-			if (s_config.TagPokemon && (Tweet.Length(tweet + " #" + SpellCheckPokemon(pokemon.Kind, true)) < 138))
-				tweet += " #" + SpellCheckPokemon(pokemon.Kind, true);
-
-			if (s_config.TagRegion && (Tweet.Length(tweet + " #" + Regex.Replace(region.Name, @"\s+", "")) < 138))
-				tweet += " #" + Regex.Replace(region.Name, @"\s+", "");
-
-			foreach(string tag in s_config.CustomTags)
-			{
-				if(Tweet.Length(tweet + tag) < 138)
-					tweet += " #" + tag;
-			}
-
-			Log("[!]Sucessfully composed tweet.");
-			return tweet;
-		}
-
-        //Create a message for the groupme
+        //Build a tweet with useful information about the pokemon, then cram in as many hashtags as will fit.
         private static string ComposeGroupMeMessage(FoundPokemon pokemon, Region region)
         {
-            Log("[!]Composing Tweet");
+            Log("[!]Composing message");
             string latitude = pokemon.Location.Latitude.ToString(System.Globalization.CultureInfo.GetCultureInfo("en-us"));
             string longitude = pokemon.Location.Longitude.ToString(System.Globalization.CultureInfo.GetCultureInfo("en-us"));
             string mapsLink = $"https://www.google.com/maps/place/{latitude},{longitude}";
@@ -284,18 +252,6 @@ namespace Pokewatch
             message = Regex.Replace(message, @"\s\s", @" ");
             message = Regex.Replace(message, @"\s[!]", @"!");
 
-            //if (s_config.TagPokemon && (Tweet.Length(message + " #" + SpellCheckPokemon(pokemon.Kind, true)) < 138))
-            //    message += " #" + SpellCheckPokemon(pokemon.Kind, true);
-
-            //if (s_config.TagRegion && (Tweet.Length(message + " #" + Regex.Replace(region.Name, @"\s+", "")) < 138))
-            //    message += " #" + Regex.Replace(region.Name, @"\s+", "");
-
-            //foreach (string tag in s_config.CustomTags)
-            //{
-            //    if (Tweet.Length(message + tag) < 138)
-            //        message += " #" + tag;
-            //}
-
             Log("[!]Sucessfully composed message.");
             return message;
         }
@@ -313,10 +269,10 @@ namespace Pokewatch
 					display = isHashtag ? "MrMime" : "Mr. Mime";
 					break;
 				case PokemonId.NidoranFemale:
-					display = isHashtag ? "Nidoran" : "Nidoran♀";
+					display = isHashtag ? "Nidoran" : "NidoranBoy";
 					break;
 				case PokemonId.NidoranMale:
-					display = isHashtag ? "Nidoran" : "Nidoran♂";
+					display = isHashtag ? "Nidoran" : "NidoranFemale";
 					break;
 				default:
 					display = pokemon.ToString();
@@ -329,32 +285,6 @@ namespace Pokewatch
 			Regex regex = new Regex("[^a-zA-Z0-9]");
 			return isHashtag ? regex.Replace(display, "") : display;
 		}
-
-        internal class GroupMeBot
-        {
-            public string bot_id;
-
-            public GroupMeBot(string bot_id)
-            {
-                this.bot_id = bot_id;
-            }
-            
-            public void PostMessage(string message)
-            {
-                HttpWebRequest httpRequest = (HttpWebRequest)WebRequest.Create("https://api.groupme.com/v3/bots/post");
-                httpRequest.Method = "POST";
-                httpRequest.ContentType = "application/json";
-
-                
-                string requestString = JsonConvert.SerializeObject(message);
-                byte[] bytes = new ASCIIEncoding().GetBytes(requestString);
-
-                httpRequest.ContentLength = bytes.Length;
-                System.IO.Stream httpStream = httpRequest.GetRequestStream();
-                httpStream.Write(bytes, 0, bytes.Length);
-                httpStream.Close();
-            }
-        }
 
         private static void Log(string message)
 		{
