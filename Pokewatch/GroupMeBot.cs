@@ -21,8 +21,9 @@ namespace Pokewatch
             httpRequest.Method = "POST";
             httpRequest.ContentType = "application/json";
 
-            string requestString = JsonConvert.SerializeObject(message);
-            byte[] bytes = new ASCIIEncoding().GetBytes(requestString);
+            BotMessage jsonMessage = new BotMessage(this.bot_id, message);
+            string m = JsonConvert.SerializeObject(jsonMessage);
+            byte[] bytes = new ASCIIEncoding().GetBytes(m);
 
             httpRequest.ContentLength = bytes.Length;
             Stream httpStream = httpRequest.GetRequestStream();
@@ -49,6 +50,18 @@ namespace Pokewatch
             return null;
         }
 
+        internal class BotMessage
+         {
+             public string bot_id;
+             public string text;
+ 
+             public BotMessage(string bot_id, string text)
+             {
+                 this.bot_id = bot_id;
+                 this.text = text;
+             }
+         }
 
-    }
+
+    } //class GroupMeBot
 }

@@ -10,22 +10,16 @@ using Pokewatch.Datatypes;
 using Pokewatch.DataTypes;
 using POGOLib.Net;
 using POGOLib.Net.Authentication;
-using POGOLib.Pokemon;
 using POGOLib.Pokemon.Data;
 using POGOProtos.Enums;
 using POGOProtos.Map;
 using POGOProtos.Map.Pokemon;
-using Tweetinvi;
 using Tweetinvi.Core.Extensions;
-using Tweetinvi.Models;
 using Location = Pokewatch.Datatypes.Location;
-using System.Net;
-using System.Text;
-using Newtonsoft.Json;
 
 namespace Pokewatch
 {
-	public class Program
+    public class Program
 	{
         private static Configuration s_config;
         private static GroupMeBot groupMeBot;
@@ -58,8 +52,7 @@ namespace Pokewatch
             //Setup GroupMeBot
             try
             {
-                groupMeBot = new GroupMeBot(JET_GROUPMEBOT_KEY); //Jasper town
-                groupMeBot.ListenForMessages();
+                groupMeBot = new GroupMeBot(JET_GROUPMEBOT_KEY); //JET area
             }
             catch (Exception e)
             {
